@@ -376,14 +376,17 @@ def main(exp, args):
         with open(args.gt_bbox) as f:
             annot = json.load(f)
         labels = annot['labels']
+        infos = annot['info']
+        frames_map = [int(u.split('_')[-1].split('.')[0]) for u in infos['url']]
         for pIdx, player in enumerate(labels):
             frames = player['data']['frames']
             #group by frame
             for frame in frames:
-                if frame['frame'] not in gtByFrames:
-                    gtByFrames[frame['frame']] = [[], []]
-                gtByFrames[frame['frame']][0].append(frame['points'] + [1])
-                gtByFrames[frame['frame']][1].append(pIdx)
+                frame_idx = frames_map[frame['frame']]
+                if frame_idx not in gtByFrames:
+                    gtByFrames[frame_idx] = [[], []]
+                gtByFrames[frame_idx][0].append(frame['points'] + [1])
+                gtByFrames[frame_idx][1].append(pIdx)
         for k, v in gtByFrames.items():
             gtByFrames[k] = (np.array(v[0]), np.array(v[1]))
 

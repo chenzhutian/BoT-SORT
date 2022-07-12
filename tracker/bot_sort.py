@@ -285,6 +285,12 @@ class BoTSORT(object):
         ''' Add newly detected tracklets to tracked_stracks'''
         unconfirmed = []
         tracked_stracks = []  # type: list[STrack]
+        
+        ## remove trackers in gt_ids
+        if gt_ids is not None:
+            self.tracked_stracks = [t for t in self.tracked_stracks if t.track_id in gt_ids]
+            self.lost_stracks = [t for t in self.lost_stracks if t.track_id in gt_ids]
+
         for track in self.tracked_stracks:
             if not track.is_activated:
                 unconfirmed.append(track)
@@ -331,17 +337,18 @@ class BoTSORT(object):
             matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.args.match_thresh)
         else:
             # if gt, directly match by id
-            matches, u_track, u_detection = [], [], []
-            matched_track = set()
-            for idet, gt_id in enumerate(gt_ids):
-                itracked = next((idx for idx, track in enumerate(strack_pool) if track.track_id == gt_id), None)
-                if itracked is not None:
-                    matches.append([itracked, idet])
-                    matched_track.add(itracked)
-                else:
-                    u_detection.append(idet)
-            u_track = np.array([idx for idx, _ in enumerate(strack_pool) if idx not in matched_track])
-            matches, u_detection = np.array(matches), np.array(u_detection)
+            matches, u_track, u_detection = [], np.array([idx for idx, _ in enumerate(strack_pool)]), np.array(list(range(len(gt_ids))))
+            # matched_track = set()
+            # for idet, gt_id in enumerate(gt_ids):
+            #     itracked = next((idx for idx, track in enumerate(strack_pool) if track.track_id == gt_id), None)
+            #     if itracked is not None:
+            #         # matches.append([itracked, idet])
+            #         matched_track.add(itracked)
+            #         u_detection.append(idet)
+            #     else:
+            #         u_detection.append(idet)
+            # u_track = np.array([idx for idx, _ in enumerate(strack_pool) if idx not in matched_track])
+            # matches, u_detection = np.array(matches), np.array(u_detection)
             
         for itracked, idet in matches:
             track = strack_pool[itracked]
@@ -394,6 +401,7 @@ class BoTSORT(object):
                 lost_stracks.append(track)
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
+        # print('gt_ids', gt_ids)
         detections = [detections[i] for i in u_detection]
         dists = matching.iou_distance(unconfirmed, detections)
         if not self.args.mot20:
