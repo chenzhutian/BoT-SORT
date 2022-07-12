@@ -1,3 +1,4 @@
+from typing import List
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -82,10 +83,10 @@ class STrack(BaseTrack):
                 stracks[i].mean = mean
                 stracks[i].covariance = cov
 
-    def activate(self, kalman_filter, frame_id):
+    def activate(self, kalman_filter, frame_id, player_id: int):
         """Start a new tracklet"""
         self.kalman_filter = kalman_filter
-        self.track_id = self.next_id()
+        self.track_id = player_id #self.next_id()
 
         self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xywh(self._tlwh))
 
@@ -227,7 +228,7 @@ class BoTSORT(object):
 
         self.gmc = GMC(method=args.cmc_method, verbose=[args.name, args.ablation])
 
-    def update(self, output_results, img):
+    def update(self, output_results, gt_ids: List[int], img):
         self.frame_id += 1
         activated_starcks = []
         refind_stracks = []
@@ -308,12 +309,12 @@ class BoTSORT(object):
 
         if self.args.with_reid:
             emb_dists = matching.embedding_distance(strack_pool, detections) / 2.0
-            raw_emb_dists = emb_dists.copy()
             emb_dists[emb_dists > self.appearance_thresh] = 1.0
             emb_dists[ious_dists_mask] = 1.0
             dists = np.minimum(ious_dists, emb_dists)
 
             # Popular ReID method (JDE / FairMOT)
+            # raw_emb_dists = emb_dists.copy()
             # raw_emb_dists = matching.embedding_distance(strack_pool, detections)
             # dists = matching.fuse_motion(self.kalman_filter, raw_emb_dists, strack_pool, detections)
             # emb_dists = dists
@@ -391,13 +392,16 @@ class BoTSORT(object):
             removed_stracks.append(track)
 
         """ Step 4: Init new stracks"""
-        for inew in u_detection:
-            track = detections[inew]
-            if track.score < self.new_track_thresh:
-                continue
+        if gt_ids is not None:
+            '''can only init new tracks in GT frames'''
+            assert len(u_detection) == len(gt_ids), 'u_detection should be the same size with gt_ids'
+            for inew, gt_id in zip(u_detection, gt_ids):
+                track = detections[inew]
+                if track.score < self.new_track_thresh:
+                    continue
 
-            track.activate(self.kalman_filter, self.frame_id)
-            activated_starcks.append(track)
+                track.activate(self.kalman_filter, self.frame_id, gt_id)
+                activated_starcks.append(track)
 
         """ Step 5: Update state"""
         for track in self.lost_stracks:

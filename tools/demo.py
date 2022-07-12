@@ -215,7 +215,7 @@ def image_demo(predictor, vis_folder, current_time, args):
         logger.info(f"save results to {res_file}")
 
 
-def imageflow_demo(predictor, vis_folder, current_time, args):
+def imageflow_demo(predictor, vis_folder, gt_bboxes, current_time, args):
     cap = cv2.VideoCapture(args.path if args.demo == "video" else args.camid)
     width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)  # float
     height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)  # float
@@ -240,17 +240,25 @@ def imageflow_demo(predictor, vis_folder, current_time, args):
             logger.info('Processing frame {} ({:.2f} fps)'.format(frame_id, 1. / max(1e-5, timer.average_time)))
         ret_val, frame = cap.read()
         if ret_val:
-            # Detect objects
-            outputs, img_info = predictor.inference(frame, timer)
-            scale = min(exp.test_size[0] / float(img_info['height'], ), exp.test_size[1] / float(img_info['width']))
+            detections = None
+            gt_ids = None
+            # if frame with GT
+            if frame_id in gt_bboxes:
+                detections, gt_ids = gt_bboxes[frame_id]
+            else:
+                # Detect objects
+                outputs, img_info = predictor.inference(frame, timer)
+                scale = min(exp.test_size[0] / float(img_info['height'], ), exp.test_size[1] / float(img_info['width']))
 
-            if outputs[0] is not None:
-                outputs = outputs[0].cpu().numpy()
-                detections = outputs[:, :7]
-                detections[:, :4] /= scale
+                if outputs[0] is not None:
+                    outputs = outputs[0].cpu().numpy()
+                    detections = outputs[:, :7]
+                    detections[:, :4] /= scale
 
+            # do the tracking
+            if detections is not None:
                 # Run tracker
-                online_targets = tracker.update(detections, img_info["raw_img"])
+                online_targets = tracker.update(detections, gt_ids, img_info["raw_img"])
 
                 online_tlwhs = []
                 online_ids = []
@@ -273,6 +281,7 @@ def imageflow_demo(predictor, vis_folder, current_time, args):
             else:
                 timer.toc()
                 online_im = img_info['raw_img']
+
             if args.save_result:
                 vid_writer.write(online_im)
             ch = cv2.waitKey(1)
