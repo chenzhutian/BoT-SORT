@@ -334,7 +334,7 @@ class BoTSORT(object):
             matches, u_track, u_detection = [], [], []
             matched_track = set()
             for idet, gt_id in enumerate(gt_ids):
-                itracked = next((idx for idx, track in enumerate(strack_pool) if track.id == gt_id), None)
+                itracked = next((idx for idx, track in enumerate(strack_pool) if track.track_id == gt_id), None)
                 if itracked is not None:
                     matches.append([itracked, idet])
                     matched_track.add(itracked)
@@ -410,7 +410,7 @@ class BoTSORT(object):
         """ Step 4: Init new stracks"""
         '''can only init new tracks in GT frames'''
         if gt_ids is not None:
-            assert len(u_detection) == len(gt_ids), 'u_detection should be the same size with gt_ids'
+            # assert len(u_detection) == len(gt_ids), 'u_detection should be the same size with gt_ids'
             for inew in u_detection:
                 track = detections[inew]
                 if track.score < self.new_track_thresh:

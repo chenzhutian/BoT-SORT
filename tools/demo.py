@@ -3,7 +3,11 @@ import argparse
 import os
 import os.path as osp
 import time
+import json
+from typing import List, Dict, Tuple
 import cv2
+import numpy as np
+from numpy import number
 import torch
 
 from loguru import logger
@@ -39,6 +43,9 @@ def make_parser():
     parser.add_argument("--fp16", dest="fp16", default=False, action="store_true",help="Adopting mix precision evaluating.")
     parser.add_argument("--fuse", dest="fuse", default=False, action="store_true", help="Fuse conv and bn for testing.")
     parser.add_argument("--trt", dest="trt", default=False, action="store_true", help="Using TensorRT model for testing.")
+
+    # Gt bbox
+    parser.add_argument("-g", "--gt_bbox", default=None, type=str, help="provide the GT bboxes")
 
     # tracking args
     parser.add_argument("--track_high_thresh", type=float, default=0.6, help="tracking confidence threshold")
@@ -215,7 +222,12 @@ def image_demo(predictor, vis_folder, current_time, args):
         logger.info(f"save results to {res_file}")
 
 
-def imageflow_demo(predictor, vis_folder, gt_bboxes, current_time, args):
+def imageflow_demo(predictor, vis_folder, gt_bboxes: Dict[int, 
+                                                          Tuple[ 
+                                                               List[List[number]], 
+                                                               List[int]
+                                                               ]  
+                                                          ], current_time, args):
     cap = cv2.VideoCapture(args.path if args.demo == "video" else args.camid)
     width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)  # float
     height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)  # float
@@ -245,6 +257,7 @@ def imageflow_demo(predictor, vis_folder, gt_bboxes, current_time, args):
             # if frame with GT
             if frame_id in gt_bboxes:
                 detections, gt_ids = gt_bboxes[frame_id]
+                img_info = { "raw_img": frame }
             else:
                 # Detect objects
                 outputs, img_info = predictor.inference(frame, timer)
@@ -357,12 +370,29 @@ def main(exp, args):
         trt_file = None
         decoder = None
 
+    gtByFrames = {}
+    if args.gt_bbox is not None and os.path.exists(args.gt_bbox):
+        # convert to List[bboxes, List[int]]
+        with open(args.gt_bbox) as f:
+            annot = json.load(f)
+        labels = annot['labels']
+        for pIdx, player in enumerate(labels):
+            frames = player['data']['frames']
+            #group by frame
+            for frame in frames:
+                if frame['frame'] not in gtByFrames:
+                    gtByFrames[frame['frame']] = [[], []]
+                gtByFrames[frame['frame']][0].append(frame['points'] + [1])
+                gtByFrames[frame['frame']][1].append(pIdx)
+        for k, v in gtByFrames.items():
+            gtByFrames[k] = (np.array(v[0]), np.array(v[1]))
+
     predictor = Predictor(model, exp, trt_file, decoder, args.device, args.fp16)
     current_time = time.localtime()
     if args.demo == "image" or args.demo == "images":
         image_demo(predictor, vis_folder, current_time, args)
     elif args.demo == "video" or args.demo == "webcam":
-        imageflow_demo(predictor, vis_folder, current_time, args)
+        imageflow_demo(predictor, vis_folder, gtByFrames, current_time, args)
     else:
         raise ValueError("Error: Unknown source: " + args.demo)
 
