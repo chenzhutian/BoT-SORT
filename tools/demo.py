@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from numpy import number
 import torch
+from transformers import ViTForImageClassification, ViTFeatureExtractor
 
 from loguru import logger
 
@@ -247,6 +248,14 @@ def imageflow_demo(predictor, vis_folder, gt_bboxes: Dict[int,
     timer = Timer()
     frame_id = 0
     results = []
+    
+    #
+    model_name_or_path = 'google/vit-base-patch16-224-in21k'
+    feature_extractor = ViTFeatureExtractor.from_pretrained(model_name_or_path)
+    classifier = ViTForImageClassification.from_pretrained('/home/jerry/player-classifier/vit-base-beans-demo-v5/')
+    classifier.eval()
+    classifier.cuda()
+    
     while True:
         if frame_id % 20 == 0:
             logger.info('Processing frame {} ({:.2f} fps)'.format(frame_id, 1. / max(1e-5, timer.average_time)))
@@ -267,6 +276,43 @@ def imageflow_demo(predictor, vis_folder, gt_bboxes: Dict[int,
                     outputs = outputs[0].cpu().numpy()
                     detections = outputs[:, :7]
                     detections[:, :4] /= scale
+                    
+                    # do classification
+                    if detections.shape[1] == 5:
+                        scores = detections[:, 4]
+                        bboxes = detections[:, :4]
+                        classes = detections[:, -1]
+                    else:
+                        scores = detections[:, 4] * detections[:, 5]
+                        bboxes = detections[:, :4]  # x1y1x2y2
+                        classes = detections[:, -1]
+                    
+                    lowest_inds = scores > tracker.track_low_thresh
+                    bboxes = bboxes[lowest_inds]
+                    scores = scores[lowest_inds]
+                    classes = classes[lowest_inds]
+
+                    # player_inds = []
+                    patches = []
+                    for bIdx, bbox in enumerate(bboxes):
+                        if bbox.min() < 0 or bbox.max() > 1280: continue
+                        x1, y1, x2, y2 = bbox.astype(int)
+                        try:
+                            patch = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2RGB)          
+                            patches.append((bIdx, patch))
+                        except:
+                            print(x1, y1, x2, y2)
+                    
+                    inputs = feature_extractor([patch for _, patch in patches], return_tensors="pt")
+                    inputs['pixel_values'] = inputs['pixel_values'].cuda()
+                    # print(x1, y1, x2, y2)
+                    with torch.no_grad():
+                        logits = classifier(**inputs).logits
+                    player_inds = [patches[i][0] for i in (logits.argmax(-1) == 1).nonzero().squeeze().tolist()]
+                    # predicted_labels = logits.argmax(-1).cpu().numpy()
+                    # player_inds = [bIdx for (bIdx, _), label in zip(patches, labels) if label == 1]
+                    # print('#players', player_inds, len(player_inds))
+                    detections = detections[player_inds]
 
             # do the tracking
             if detections is not None:
@@ -279,6 +325,7 @@ def imageflow_demo(predictor, vis_folder, gt_bboxes: Dict[int,
                 for t in online_targets:
                     tlwh = t.tlwh
                     tid = t.track_id
+                    # if tid > 9: continue
                     vertical = tlwh[2] / tlwh[3] > args.aspect_ratio_thresh
                     if tlwh[2] * tlwh[3] > args.min_box_area and not vertical:
                         online_tlwhs.append(tlwh)
@@ -391,6 +438,7 @@ def main(exp, args):
             gtByFrames[k] = (np.array(v[0]), np.array(v[1]))
 
     predictor = Predictor(model, exp, trt_file, decoder, args.device, args.fp16)
+
     current_time = time.localtime()
     if args.demo == "image" or args.demo == "images":
         image_demo(predictor, vis_folder, current_time, args)
