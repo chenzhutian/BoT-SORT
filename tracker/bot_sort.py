@@ -3,6 +3,7 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import deque
+from itertools import zip_longest
 
 from tracker import matching
 from tracker.gmc import GMC
@@ -268,29 +269,16 @@ class BoTSORT(object):
             classes_keep = []
 
         '''Extract embeddings '''
-        if self.args.with_reid:
-            features_keep = self.encoder.inference(img, dets)
+        features_keep = self.encoder.inference(img, dets) if self.args.with_reid else []
+        gt_ids = gt_ids if gt_ids is not None else []
 
-        if len(dets) > 0:
-            '''Detections'''
-            if self.args.with_reid:
-                detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, f) for
-                              (tlbr, s, f) in zip(dets, scores_keep, features_keep)]
-            else:
-                detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for
-                              (tlbr, s) in zip(dets, scores_keep)]
-        else:
-            detections = []
+        '''Detections'''
+        detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, gId, f) 
+                      for (tlbr, s, f, gId) in zip_longest(dets, scores_keep, features_keep, gt_ids)] if len(dets) > 0 else []
 
         ''' Add newly detected tracklets to tracked_stracks'''
         unconfirmed = [] # type: list[STrack]
         tracked_stracks = []  # type: list[STrack]
-        
-        ## remove trackers in gt_ids
-        # if gt_ids is not None:
-        #     self.tracked_stracks = [t for t in self.tracked_stracks if t.track_id not in gt_ids]
-        #     self.lost_stracks = [t for t in self.lost_stracks if t.track_id not in gt_ids]
-
         for track in self.tracked_stracks:
             if not track.is_activated:
                 unconfirmed.append(track)
@@ -300,7 +288,6 @@ class BoTSORT(object):
         ''' Step 2: First association, with high score detection boxes'''
         strack_pool: List[STrack] = joint_stracks(tracked_stracks, self.lost_stracks)
 
-        # if gt_ids is None:
         # Predict the current location with KF
         STrack.multi_predict(strack_pool)
 
@@ -321,49 +308,13 @@ class BoTSORT(object):
             emb_dists[emb_dists > self.appearance_thresh] = 1.0
             emb_dists[ious_dists_mask] = 1.0
             dists = np.minimum(ious_dists, emb_dists)
-
-            # Popular ReID method (JDE / FairMOT)
-            # raw_emb_dists = emb_dists.copy()
-            # raw_emb_dists = matching.embedding_distance(strack_pool, detections)
-            # dists = matching.fuse_motion(self.kalman_filter, raw_emb_dists, strack_pool, detections)
-            # emb_dists = dists
-
-            # IoU making ReID
-            # dists = matching.embedding_distance(strack_pool, detections)
-            # dists[ious_dists_mask] = 1.0
         else:
             dists = ious_dists
 
-        matches_all: List[Tuple(STrack, STrack)] = [] # type: List[Tuple(STrack, STrack)] 
+        matches_all: List[Tuple[STrack, STrack]] = []
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.args.match_thresh)
-        # else:
-            # if gt, directly match by id
-            # method 1
-            # matches, u_track, u_detection = [], np.array([idx for idx, _ in enumerate(strack_pool)]), np.array(list(range(len(gt_ids))))
-            
-            # method 2
-            # matches, u_track, u_detection = [], [], []
-            # matched_track = set()
-            # for idet, gt_id in enumerate(gt_ids):
-            #     itracked = next((idx for idx, track in enumerate(strack_pool) if track.track_id == gt_id), None)
-            #     if itracked is not None:
-            #         matches.append([itracked, idet])
-            #         matched_track.add(itracked)
-            #     else:
-            #         u_detection.append(idet)
-            # u_track = np.array([idx for idx, _ in enumerate(strack_pool) if idx not in matched_track])
-            # matches, u_detection = np.array(matches), np.array(u_detection)
 
         matches_all += [(strack_pool[itracked], detections[idet]) for itracked, idet in matches]
-        # for itracked, idet in matches:
-            # track = strack_pool[itracked]
-            # det = detections[idet]
-            # if track.state == TrackState.Tracked:
-                # track.update(det, self.frame_id)
-                # activated_starcks.append(track)
-            # else:
-                # track.re_activate(det, self.frame_id, new_id=False)
-                # refind_stracks.append(track)
 
         ''' Step 3: Second association, with low score detection boxes'''
         if len(scores):
@@ -387,15 +338,6 @@ class BoTSORT(object):
         matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
 
         matches_all += [(r_tracked_stracks[itracked], detections_second[idet]) for itracked, idet in matches]
-        # for itracked, idet in matches:
-        #     track = r_tracked_stracks[itracked]
-        #     det = detections_second[idet]
-        #     if track.state == TrackState.Tracked:
-        #         track.update(det, self.frame_id)
-        #         activated_starcks.append(track)
-        #     else:
-        #         track.re_activate(det, self.frame_id, new_id=False)
-        #         refind_stracks.append(track)
 
         for it in u_track:
             track = r_tracked_stracks[it]
@@ -406,19 +348,13 @@ class BoTSORT(object):
         # @TODO, should do OC 3ed association here
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
-        # print('gt_ids', gt_ids)
         detections = [detections[i] for i in u_detection]
         dists = matching.iou_distance(unconfirmed, detections)
         if not self.args.mot20:
             dists = matching.fuse_score(dists, detections)
         matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
 
-        matches_all += [(unconfirmed[itracked],detections[idet]) for itracked, idet in matches]
-        # for itracked, idet in matches:
-        #     track = unconfirmed[itracked]
-        #     det = detections[idet]
-        #     track.update(det, self.frame_id)
-        #     activated_starcks.append(track)
+        matches_all += [(unconfirmed[itracked], detections[idet]) for itracked, idet in matches]
 
         for it in u_unconfirmed:
             track = unconfirmed[it]
@@ -428,22 +364,42 @@ class BoTSORT(object):
         """ Step 4: Init new stracks"""
         """ Replace or Update"""
         for track, det in matches_all:
-            if not track.is_activated or track.state == TrackState.Tracked:
-                track.update(det, self.frame_id)
-                activated_starcks.append(track)
+            if len(gt_ids) == 0:
+                if not track.is_activated or track.state == TrackState.Tracked:
+                    track.update(det, self.frame_id)
+                    activated_starcks.append(track)
+                else:
+                    track.re_activate(det, self.frame_id, new_id=False)
+                    refind_stracks.append(track)
             else:
-                track.re_activate(det, self.frame_id, new_id=False)
-                refind_stracks.append(track)
-
+                if track.track_id == det.track_id: # in gt frame, the det should always have track_id
+                    if not track.is_activated or track.state == TrackState.Tracked:
+                        track.update(det, self.frame_id)
+                        activated_starcks.append(track)
+                    else:
+                        track.re_activate(det, self.frame_id, new_id=False)
+                        refind_stracks.append(track)
+                else:
+                    # replace
+                    track._tlwh = det._tlwh
+                    track.activate(self.kalman_filter, self.frame_id, det.track_id)
+                    track.is_activated = True
+                    activated_starcks.append(track)
+                                    
         # '''can only init new tracks in GT frames'''
-        # if gt_ids is not None:
-        for inew in u_detection:
-            track = detections[inew]
-            if track.score < self.new_track_thresh:
-                continue
-            gt_id = None if gt_ids is None else gt_ids[inew]
-            track.activate(self.kalman_filter, self.frame_id, gt_id)
-            activated_starcks.append(track)
+        if len(gt_ids) > 0:
+            for inew in u_detection:
+                track = detections[inew]
+                if track.score < self.new_track_thresh:
+                    continue
+                # gt_id = None if len(gt_ids) == 0 else gt_ids[inew]
+                # if exist, replace
+                
+                # else, activate
+                
+                track.activate(self.kalman_filter, self.frame_id, track.track_id)
+                track.is_activated = True
+                activated_starcks.append(track)
 
         """ Step 5: Update state"""
         for track in self.lost_stracks:
@@ -463,10 +419,7 @@ class BoTSORT(object):
 
         # output_stracks = [track for track in self.tracked_stracks if track.is_activated]
         output_stracks = [track for track in self.tracked_stracks]
-
-
         return output_stracks
-
 
 def joint_stracks(tlista, tlistb):
     exists = {}
