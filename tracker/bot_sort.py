@@ -85,10 +85,10 @@ class STrack(BaseTrack):
                 stracks[i].mean = mean
                 stracks[i].covariance = cov
 
-    def activate(self, kalman_filter, frame_id, player_id: int):
+    def activate(self, kalman_filter, frame_id, player_id: int = None):
         """Start a new tracklet"""
         self.kalman_filter = kalman_filter
-        self.track_id = player_id #self.next_id()
+        self.track_id = player_id if player_id is not None else self.next_id()
 
         self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xywh(self._tlwh))
 
@@ -287,9 +287,9 @@ class BoTSORT(object):
         tracked_stracks = []  # type: list[STrack]
         
         ## remove trackers in gt_ids
-        if gt_ids is not None:
-            self.tracked_stracks = [t for t in self.tracked_stracks if t.track_id in gt_ids]
-            self.lost_stracks = [t for t in self.lost_stracks if t.track_id in gt_ids]
+        # if gt_ids is not None:
+        #     self.tracked_stracks = [t for t in self.tracked_stracks if t.track_id not in gt_ids]
+        #     self.lost_stracks = [t for t in self.lost_stracks if t.track_id not in gt_ids]
 
         for track in self.tracked_stracks:
             if not track.is_activated:
@@ -337,24 +337,27 @@ class BoTSORT(object):
             matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.args.match_thresh)
         else:
             # if gt, directly match by id
-            matches, u_track, u_detection = [], np.array([idx for idx, _ in enumerate(strack_pool)]), np.array(list(range(len(gt_ids))))
-            # matched_track = set()
-            # for idet, gt_id in enumerate(gt_ids):
-            #     itracked = next((idx for idx, track in enumerate(strack_pool) if track.track_id == gt_id), None)
-            #     if itracked is not None:
-            #         # matches.append([itracked, idet])
-            #         matched_track.add(itracked)
-            #         u_detection.append(idet)
-            #     else:
-            #         u_detection.append(idet)
-            # u_track = np.array([idx for idx, _ in enumerate(strack_pool) if idx not in matched_track])
-            # matches, u_detection = np.array(matches), np.array(u_detection)
+            # method 1
+            # matches, u_track, u_detection = [], np.array([idx for idx, _ in enumerate(strack_pool)]), np.array(list(range(len(gt_ids))))
+            
+            # method 2
+            matches, u_track, u_detection = [], [], []
+            matched_track = set()
+            for idet, gt_id in enumerate(gt_ids):
+                itracked = next((idx for idx, track in enumerate(strack_pool) if track.track_id == gt_id), None)
+                if itracked is not None:
+                    matches.append([itracked, idet])
+                    matched_track.add(itracked)
+                else:
+                    u_detection.append(idet)
+            u_track = np.array([idx for idx, _ in enumerate(strack_pool) if idx not in matched_track])
+            matches, u_detection = np.array(matches), np.array(u_detection)
             
         for itracked, idet in matches:
             track = strack_pool[itracked]
             det = detections[idet]
             if track.state == TrackState.Tracked:
-                track.update(detections[idet], self.frame_id)
+                track.update(det, self.frame_id)
                 activated_starcks.append(track)
             else:
                 track.re_activate(det, self.frame_id, new_id=False)
@@ -416,14 +419,14 @@ class BoTSORT(object):
             removed_stracks.append(track)
 
         """ Step 4: Init new stracks"""
-        '''can only init new tracks in GT frames'''
+        # '''can only init new tracks in GT frames'''
         if gt_ids is not None:
             # assert len(u_detection) == len(gt_ids), 'u_detection should be the same size with gt_ids'
             for inew in u_detection:
                 track = detections[inew]
                 if track.score < self.new_track_thresh:
                     continue
-                gt_id = gt_ids[inew]
+                gt_id = None if gt_ids is None else gt_ids[inew]
                 track.activate(self.kalman_filter, self.frame_id, gt_id)
                 activated_starcks.append(track)
 
