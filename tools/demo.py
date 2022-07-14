@@ -47,6 +47,7 @@ def make_parser():
 
     # Gt bbox
     parser.add_argument("-g", "--gt_bbox", default=None, type=str, help="provide the GT bboxes")
+    parser.add_argument("--out", default=None, type=str, help="the root folder to output results")
 
     # tracking args
     parser.add_argument("--track_high_thresh", type=float, default=0.6, help="tracking confidence threshold")
@@ -233,14 +234,13 @@ def imageflow_demo(predictor, vis_folder, gt_bboxes: Dict[int,
     width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)  # float
     height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)  # float
     fps = cap.get(cv2.CAP_PROP_FPS)
-    timestamp = time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
-    save_folder = osp.join(vis_folder, timestamp)
+    # timestamp = time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
+
+    save_folder = osp.join(args.out, osp.basename(args.path)[:-len('.mp4')])
     os.makedirs(save_folder, exist_ok=True)
-    if args.demo == "video":
-        save_path = osp.join(save_folder, args.path.split("/")[-1])
-    else:
-        save_path = osp.join(save_folder, "camera.mp4")
+    save_path = osp.join(save_folder, f"{osp.basename(args.path)[:-len('.mp4')]}_tracking.mp4")
     logger.info(f"video save_path is {save_path}")
+
     vid_writer = cv2.VideoWriter(
         save_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (int(width), int(height))
     )
@@ -354,11 +354,10 @@ def imageflow_demo(predictor, vis_folder, gt_bboxes: Dict[int,
         frame_id += 1
 
     if args.save_result:
-        res_file = osp.join(vis_folder, f"{timestamp}.txt")
+        res_file = osp.join(save_folder, f"{osp.basename(args.path)[:-len('.mp4')]}_tracking.txt")
         with open(res_file, 'w') as f:
             f.writelines(results)
         logger.info(f"save results to {res_file}")
-
 
 def main(exp, args):
     if not args.experiment_name:
