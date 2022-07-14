@@ -103,6 +103,25 @@ def iou_distance(atracks, btracks):
 
     return cost_matrix
 
+def real_iou_distance(atracks, btracks):
+    """
+    Compute cost based on IoU
+    :type atracks: list[STrack]
+    :type btracks: list[STrack]
+
+    :rtype cost_matrix np.ndarray
+    """
+
+    if (len(atracks)>0 and isinstance(atracks[0], np.ndarray)) or (len(btracks) > 0 and isinstance(btracks[0], np.ndarray)):
+        atlbrs = atracks
+        btlbrs = btracks
+    else:
+        atlbrs = [track.tlwh_to_tlbr(track._tlwh) for track in atracks]
+        btlbrs = [track.tlwh_to_tlbr(track._tlwh) for track in btracks]
+    _ious = ious(atlbrs, btlbrs)
+    cost_matrix = 1 - _ious
+
+    return cost_matrix
 
 def v_iou_distance(atracks, btracks):
     """

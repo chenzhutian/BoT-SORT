@@ -100,11 +100,13 @@ class STrack(BaseTrack):
         self.frame_id = frame_id
         self.start_frame = frame_id
 
-    def re_activate(self, new_track, frame_id, new_id=False):
+    def re_activate(self, new_track: 'STrack', frame_id, new_id=False):
 
         self.mean, self.covariance = self.kalman_filter.update(self.mean, self.covariance, self.tlwh_to_xywh(new_track.tlwh))
         if new_track.curr_feat is not None:
             self.update_features(new_track.curr_feat)
+            
+        self._tlwh = new_track._tlwh
         self.tracklet_len = 0
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -113,7 +115,7 @@ class STrack(BaseTrack):
             self.track_id = self.next_id()
         self.score = new_track.score
 
-    def update(self, new_track, frame_id):
+    def update(self, new_track: 'STrack', frame_id):
         """
         Update a matched track
         :type new_track: STrack
@@ -124,9 +126,9 @@ class STrack(BaseTrack):
         self.frame_id = frame_id
         self.tracklet_len += 1
 
-        new_tlwh = new_track.tlwh
+        self._tlwh = new_track._tlwh
 
-        self.mean, self.covariance = self.kalman_filter.update(self.mean, self.covariance, self.tlwh_to_xywh(new_tlwh))
+        self.mean, self.covariance = self.kalman_filter.update(self.mean, self.covariance, self.tlwh_to_xywh(self._tlwh))
 
         if new_track.curr_feat is not None:
             self.update_features(new_track.curr_feat)
@@ -336,8 +338,23 @@ class BoTSORT(object):
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
         dists = matching.iou_distance(r_tracked_stracks, detections_second)
         matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
-
         matches_all += [(r_tracked_stracks[itracked], detections_second[idet]) for itracked, idet in matches]
+
+        # @TODO, should do OC 3ed association here
+        # u_detection and u_track
+        detections = [detections[i] for i in u_detection]
+        r_tracked_stracks = [r_tracked_stracks[it] for it in u_track]
+        ious_dists = matching.real_iou_distance(r_tracked_stracks, detections)
+        ious_dists_mask = (ious_dists > self.proximity_thresh)
+        if self.args.with_reid:
+            emb_dists = matching.embedding_distance(r_tracked_stracks, detections) / 2.0
+            emb_dists[emb_dists > self.appearance_thresh] = 1.0
+            emb_dists[ious_dists_mask] = 1.0
+            dists = np.minimum(ious_dists, emb_dists)
+        else:
+            dists = ious_dists
+        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=0.5)
+        matches_all += [(r_tracked_stracks[itracked], detections[idet]) for itracked, idet in matches]
 
         for it in u_track:
             track = r_tracked_stracks[it]
@@ -345,15 +362,12 @@ class BoTSORT(object):
                 track.mark_lost()
                 lost_stracks.append(track)
 
-        # @TODO, should do OC 3ed association here
-
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
         detections = [detections[i] for i in u_detection]
         dists = matching.iou_distance(unconfirmed, detections)
         if not self.args.mot20:
             dists = matching.fuse_score(dists, detections)
         matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
-
         matches_all += [(unconfirmed[itracked], detections[idet]) for itracked, idet in matches]
 
         for it in u_unconfirmed:

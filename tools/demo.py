@@ -252,7 +252,7 @@ def imageflow_demo(predictor, vis_folder, gt_bboxes: Dict[int,
     #
     model_name_or_path = 'google/vit-base-patch16-224-in21k'
     feature_extractor = ViTFeatureExtractor.from_pretrained(model_name_or_path)
-    classifier = ViTForImageClassification.from_pretrained('/home/jerry/player-classifier/vit-base-beans-demo-v5/')
+    classifier = ViTForImageClassification.from_pretrained('/datadrive/player-classifier/vit-base-beans-demo-v5/')
     classifier.eval()
     classifier.cuda()
     
@@ -295,8 +295,10 @@ def imageflow_demo(predictor, vis_folder, gt_bboxes: Dict[int,
                     # player_inds = []
                     patches = []
                     for bIdx, bbox in enumerate(bboxes):
-                        if bbox.min() < 0 or bbox.max() > 1280: continue
+                        # if bbox.min() < 0 or bbox.max() > 1280: continue
                         x1, y1, x2, y2 = bbox.astype(int)
+                        x1, x2 = np.clip([x1, x2], 0, 1280)
+                        y1, y2 = np.clip([y1, y2], 0, 720)
                         try:
                             patch = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2RGB)          
                             patches.append((bIdx, patch))
