@@ -252,7 +252,7 @@ def imageflow_demo(predictor, vis_folder, gt_bboxes: Dict[int,
     #
     model_name_or_path = 'google/vit-base-patch16-224-in21k'
     feature_extractor = ViTFeatureExtractor.from_pretrained(model_name_or_path)
-    classifier = ViTForImageClassification.from_pretrained('/datadrive/player-classifier/vit-base-beans-demo-v5/')
+    classifier = ViTForImageClassification.from_pretrained('/datadrive/player-classifier/vit-base-beans-r9/')
     classifier.eval()
     classifier.cuda()
     
