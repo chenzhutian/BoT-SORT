@@ -38,6 +38,7 @@ def main(args):
         Checkpointer(model).load(cfg.MODEL.WEIGHTS)  # load trained model
 
         res = DefaultTrainer.test(cfg, model)
+        print(res)
         return res
 
     trainer = DefaultTrainer(cfg)

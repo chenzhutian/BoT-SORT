@@ -143,7 +143,7 @@ class TrainerBase:
                     print("start epoch {}".format(self.epoch))
                     for _ in range(iters_per_epoch):
                         self.before_step()
-                        self.run_step()
+                        self.run_step(self.iter)
                         self.after_step()
                         if self.iter % 20 == 0:
                             print("iter {}".format(self.iter))
@@ -330,7 +330,7 @@ class AMPTrainer(SimpleTrainer):
             grad_scaler = GradScaler()
         self.grad_scaler = grad_scaler
 
-    def run_step(self):
+    def run_step(self, current_iter=0):
         """
         Implement the AMP training logic.
         """
@@ -344,6 +344,8 @@ class AMPTrainer(SimpleTrainer):
 
         with autocast():
             loss_dict = self.model(data)
+            if current_iter % 20 == 0:
+                print('Losses:', {k:float(v) for k,v in loss_dict.items()}, flush=True)
             losses = sum(loss_dict.values())
 
         self.optimizer.zero_grad()

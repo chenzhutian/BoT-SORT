@@ -237,7 +237,7 @@ class DefaultTrainer(TrainerBase):
         self.warmup_iters = cfg.SOLVER.WARMUP_ITERS
         self.delay_epochs = cfg.SOLVER.DELAY_EPOCHS
         self.cfg = cfg
-
+        print("Max epoch:", self.max_epoch)
         self.register_hooks(self.build_hooks())
 
     def resume_or_load(self, resume=True):
@@ -354,9 +354,9 @@ class DefaultTrainer(TrainerBase):
             ), "No evaluation results obtained during training!"
             return self._last_eval_results
 
-    def run_step(self):
+    def run_step(self, current_iter=0):
         self._trainer.iter = self.iter
-        self._trainer.run_step()
+        self._trainer.run_step(current_iter)
 
     @classmethod
     def build_model(cls, cfg):

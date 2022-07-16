@@ -37,6 +37,8 @@ from .shinpuhkan import Shinpuhkan
 from .wildtracker import WildTrackCrop
 from .cuhk_sysu import cuhkSYSU
 
+# NBA dataset
+from .nba import NBA
 
 # Vehicle re-id datasets
 from .veri import VeRi

@@ -4,9 +4,13 @@ MODEL:
   BACKBONE:
     NAME: build_resnest_backbone
   WEIGHTS: /datadrive/bot-sort/pretrained/mot20_sbs_S50.pth
+  DEVICE: "cuda:0"
 
 DATASETS:
-  NAMES: ("MOT20",)
-  TESTS: ("MOT20",)
+  NAMES: ("NBA",)
+  TESTS: ("NBA",)
 
-OUTPUT_DIR: logs/MOT20/sbs_S50
+SOLVER:
+  MAX_EPOCH: 60
+
+OUTPUT_DIR: logs/NBA/sbs_S50
