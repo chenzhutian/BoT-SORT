@@ -345,7 +345,7 @@ class BoTSORT(object):
         detections = [detections[i] for i in u_detection]
         r_tracked_stracks = [r_tracked_stracks[it] for it in u_track]
         ious_dists = matching.real_iou_distance(r_tracked_stracks, detections)
-        ious_dists_mask = (ious_dists > self.proximity_thresh)
+        ious_dists_mask = (ious_dists > 0.3)
         if self.args.with_reid:
             emb_dists = matching.embedding_distance(r_tracked_stracks, detections) / 2.0
             emb_dists[emb_dists > self.appearance_thresh] = 1.0
@@ -353,7 +353,7 @@ class BoTSORT(object):
             dists = np.minimum(ious_dists, emb_dists)
         else:
             dists = ious_dists
-        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=0.5)
+        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=0.3)
         matches_all += [(r_tracked_stracks[itracked], detections[idet]) for itracked, idet in matches]
 
         for it in u_track:
