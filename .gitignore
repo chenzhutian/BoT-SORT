@@ -60,3 +60,5 @@ coverage.xml
 # Sphinx documentation
 docs/_build/
 tracker/tracking_utils/__pycache__/timer.cpython-37.pyc
+logs
+output
