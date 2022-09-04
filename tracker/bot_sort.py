@@ -261,6 +261,7 @@ class BoTSORT(object):
             dets = bboxes[remain_inds]
             scores_keep = scores[remain_inds]
             classes_keep = classes[remain_inds]
+            gt_ids = gt_ids[remain_inds]
 
         else:
             bboxes = []
@@ -275,8 +276,11 @@ class BoTSORT(object):
         gt_ids = gt_ids if gt_ids is not None else []
 
         '''Detections'''
-        detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, gId, f) 
+        try:
+            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, gId, f) 
                       for (tlbr, s, f, gId) in zip_longest(dets, scores_keep, features_keep, gt_ids)] if len(dets) > 0 else []
+        except Exception as e:
+            breakpoint()
 
         ''' Add newly detected tracklets to tracked_stracks'''
         unconfirmed = [] # type: list[STrack]
@@ -378,7 +382,8 @@ class BoTSORT(object):
         """ Step 4: Init new stracks"""
         """ Replace or Update"""
         for track, det in matches_all:
-            if len(gt_ids) == 0:
+            # in gt frame, the det should always have track_id
+            if len(gt_ids) == 0 or track.track_id == det.track_id or track.score >= 0.5:
                 if not track.is_activated or track.state == TrackState.Tracked:
                     track.update(det, self.frame_id)
                     activated_starcks.append(track)
@@ -386,32 +391,30 @@ class BoTSORT(object):
                     track.re_activate(det, self.frame_id, new_id=False)
                     refind_stracks.append(track)
             else:
-                if track.track_id == det.track_id: # in gt frame, the det should always have track_id
-                    if not track.is_activated or track.state == TrackState.Tracked:
-                        track.update(det, self.frame_id)
-                        activated_starcks.append(track)
-                    else:
-                        track.re_activate(det, self.frame_id, new_id=False)
-                        refind_stracks.append(track)
-                else:
-                    # replace
-                    track._tlwh = det._tlwh
-                    track.activate(self.kalman_filter, self.frame_id, det.track_id)
-                    track.is_activated = True
-                    activated_starcks.append(track)
+                # replace
+                track._tlwh = det._tlwh
+                track.activate(self.kalman_filter, self.frame_id, det.track_id)
+                track.is_activated = True
+                activated_starcks.append(track)
                                     
         # '''can only init new tracks in GT frames'''
         if len(gt_ids) > 0:
             for inew in u_detection:
                 track = detections[inew]
                 if track.score < self.new_track_thresh:
+                    print(track.score, 'is too low for new track in frame', self.frame_id)
+                    x1, y1, x2, y2 = track.tlbr
+                    cropped = img[int(y1):int(y2), int(x1):int(x2)]
+                    if cropped.size > 0:
+                        cv2.imwrite(f'unclassified/{self.frame_id}-{np.round(track.score, 3)}.png', cropped)
                     continue
                 # gt_id = None if len(gt_ids) == 0 else gt_ids[inew]
                 # if exist, replace
                 
                 # else, activate
                 
-                track.activate(self.kalman_filter, self.frame_id, track.track_id)
+                track.activate(self.kalman_filter, self.frame_id, gt_ids[inew])
+                # track.activate(self.kalman_filter, self.frame_id, track.track_id)
                 track.is_activated = True
                 activated_starcks.append(track)
 

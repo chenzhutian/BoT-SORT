@@ -10,18 +10,21 @@ import numpy as np
 from numpy import number
 import torch
 from transformers import ViTForImageClassification, ViTFeatureExtractor
+import traceback
 
 from loguru import logger
 
-sys.path.append('.')
+sys.path.append('/home/jerry/nba-BoT-SORT')
+sys.path.remove('/home/ztchen/BoT-SORT')
+print(sys.path)
 
+from predictor import classify_player
 from yolox.data.data_augment import preproc
 from yolox.exp import get_exp
 from yolox.utils import fuse_model, get_model_info, postprocess
 from yolox.utils.visualize import plot_tracking
 from tracker.bot_sort import BoTSORT
 from tracker.tracking_utils.timer import Timer
-
 
 IMAGE_EXT = [".jpg", ".jpeg", ".webp", ".bmp", ".png"]
 
@@ -48,9 +51,10 @@ def make_parser():
     # Gt bbox
     parser.add_argument("-g", "--gt_bbox", default=None, type=str, help="provide the GT bboxes")
     parser.add_argument("--out", default=None, type=str, help="the root folder to output results")
+    parser.add_argument("-cls", default=None, type=str, help="weight files for the classifier")
 
     # tracking args
-    parser.add_argument("--track_high_thresh", type=float, default=0.6, help="tracking confidence threshold")
+    parser.add_argument("--track_high_thresh", type=float, default=0.2, help="tracking confidence threshold")
     parser.add_argument("--track_low_thresh", default=0.1, type=float, help="lowest detection threshold")
     parser.add_argument("--new_track_thresh", default=0.7, type=float, help="new track thresh")
     parser.add_argument("--track_buffer", type=int, default=30, help="the frames for keep lost tracks")
@@ -246,114 +250,154 @@ def imageflow_demo(predictor, vis_folder, gt_bboxes: Dict[int,
     )
     tracker = BoTSORT(args, frame_rate=args.fps)
     timer = Timer()
-    frame_id = 0
-    results = []
+    # frame_id = 0
     
     #
     model_name_or_path = 'google/vit-base-patch16-224-in21k'
     feature_extractor = ViTFeatureExtractor.from_pretrained(model_name_or_path)
-    classifier = ViTForImageClassification.from_pretrained('/datadrive/player-classifier/vit-base-beans-r9/')
-    classifier.eval()
-    classifier.cuda()
+    # classifier = ViTForImageClassification.from_pretrained('/datadrive/player-classifier/game1-classifier/')
+    classifier = ViTForImageClassification.from_pretrained(args.cls)
+    classifier.eval().cuda()
     
+    ims_to_process = []
     while True:
-        if frame_id % 20 == 0:
-            logger.info('Processing frame {} ({:.2f} fps)'.format(frame_id, 1. / max(1e-5, timer.average_time)))
         ret_val, frame = cap.read()
         if ret_val:
-            detections = None
-            gt_ids = None
-            # if frame with GT
-            if frame_id in gt_bboxes:
-                detections, gt_ids = gt_bboxes[frame_id]
-                img_info = { "raw_img": frame }
-            else:
-                # Detect objects
-                outputs, img_info = predictor.inference(frame, timer)
-                scale = min(exp.test_size[0] / float(img_info['height'], ), exp.test_size[1] / float(img_info['width']))
-
-                if outputs[0] is not None:
-                    outputs = outputs[0].cpu().numpy()
-                    detections = outputs[:, :7]
-                    detections[:, :4] /= scale
-                    
-                    # do classification
-                    if detections.shape[1] == 5:
-                        scores = detections[:, 4]
-                        bboxes = detections[:, :4]
-                        classes = detections[:, -1]
-                    else:
-                        scores = detections[:, 4] * detections[:, 5]
-                        bboxes = detections[:, :4]  # x1y1x2y2
-                        classes = detections[:, -1]
-                    
-                    lowest_inds = scores > tracker.track_low_thresh
-                    bboxes = bboxes[lowest_inds]
-                    scores = scores[lowest_inds]
-                    classes = classes[lowest_inds]
-
-                    # player_inds = []
-                    patches = []
-                    for bIdx, bbox in enumerate(bboxes):
-                        # if bbox.min() < 0 or bbox.max() > 1280: continue
-                        x1, y1, x2, y2 = bbox.astype(int)
-                        x1, x2 = np.clip([x1, x2], 0, 1280)
-                        y1, y2 = np.clip([y1, y2], 0, 720)
-                        try:
-                            patch = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2RGB)          
-                            patches.append((bIdx, patch))
-                        except:
-                            print(x1, y1, x2, y2)
-                    
-                    inputs = feature_extractor([patch for _, patch in patches], return_tensors="pt")
-                    inputs['pixel_values'] = inputs['pixel_values'].cuda()
-                    # print(x1, y1, x2, y2)
-                    with torch.no_grad():
-                        logits = classifier(**inputs).logits
-                    player_inds = [patches[i][0] for i in (logits.argmax(-1) == 1).nonzero().squeeze().tolist()]
-                    # predicted_labels = logits.argmax(-1).cpu().numpy()
-                    # player_inds = [bIdx for (bIdx, _), label in zip(patches, labels) if label == 1]
-                    # print('#players', player_inds, len(player_inds))
-                    detections = detections[player_inds]
-
-            # do the tracking
-            if detections is not None:
-                # Run tracker
-                online_targets = tracker.update(detections, gt_ids, img_info["raw_img"])
-
-                online_tlwhs = []
-                online_ids = []
-                online_scores = []
-                for t in online_targets:
-                    tlwh = t.tlwh
-                    tid = t.track_id
-                    # if tid > 9: continue
-                    vertical = tlwh[2] / tlwh[3] > args.aspect_ratio_thresh
-                    if tlwh[2] * tlwh[3] > args.min_box_area and not vertical:
-                        online_tlwhs.append(tlwh)
-                        online_ids.append(tid)
-                        online_scores.append(t.score)
-                        results.append(
-                            f"{frame_id},{tid},{tlwh[0]:.2f},{tlwh[1]:.2f},{tlwh[2]:.2f},{tlwh[3]:.2f},{t.score:.2f},-1,-1,-1\n"
-                        )
-                timer.toc()
-                online_im = plot_tracking(
-                    img_info['raw_img'], online_tlwhs, online_ids, frame_id=frame_id + 1, fps=1. / timer.average_time
-                )
-            else:
-                timer.toc()
-                online_im = img_info['raw_img']
-
-            if args.save_result:
-                vid_writer.write(online_im)
-            ch = cv2.waitKey(1)
-            if ch == 27 or ch == ord("q") or ch == ord("Q"):
-                break
+            ims_to_process.append(frame)
         else:
             break
-        frame_id += 1
+    
+    results = []
+    ims_to_write = []
+    for frame_id, frame in enumerate(ims_to_process):
+    
+    # while True:
+        if frame_id % 20 == 0:
+            logger.info('Processing frame {} ({:.2f} fps)'.format(frame_id, 1. / max(1e-5, timer.average_time)))
+        # ret_val, frame = cap.read()
+        # if ret_val:
+        detections = None
+        gt_ids = None
+        # if frame with GT
+        if frame_id in gt_bboxes and False:
+            detections, gt_ids = gt_bboxes[frame_id]
+            img_info = { "raw_img": frame }
+        else:
+            # Detect objects
+            outputs, img_info = predictor.inference(frame, timer)
+            scale = min(exp.test_size[0] / float(img_info['height'], ), exp.test_size[1] / float(img_info['width']))
+
+            if outputs[0] is not None:
+                outputs = outputs[0].cpu().numpy()
+                detections = outputs[:, :7]
+                detections[:, :4] /= scale
+                
+                # do classification
+                if detections.shape[1] == 5:
+                    scores = detections[:, 4]
+                    bboxes = detections[:, :4]
+                    classes = detections[:, -1]
+                else:
+                    scores = detections[:, 4] * detections[:, 5]
+                    bboxes = detections[:, :4]  # x1y1x2y2
+                    classes = detections[:, -1]
+                
+                lowest_inds = scores > tracker.track_low_thresh
+                bboxes = bboxes[lowest_inds]
+                scores = scores[lowest_inds]
+                classes = classes[lowest_inds]
+
+                # player_inds = []
+                patches = []
+                for bIdx, bbox in enumerate(bboxes):                            
+                    # if bbox.min() < 0 or bbox.max() > 1280: continue
+                    x1, y1, x2, y2 = bbox.astype(int)
+                    x1, x2 = np.clip([x1, x2], 0, 1280)
+                    y1, y2 = np.clip([y1, y2], 0, 720)
+                    try:
+                        patch = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2RGB)          
+                        patches.append((bIdx, patch))
+                    except:
+                        print(x1, y1, x2, y2)
+                
+                # if frame_id == 48:
+                #     images = [cv2.cvtColor(patch, cv2.COLOR_RGB2BGR) for _, patch in patches if patch.shape[0] > 1]
+                #     [cv2.imwrite(f'48/{i}.png', img) for (i, img) in enumerate(images)]
+                #     breakpoint()
+                # if frame_id == 11:
+                #     bbox_vis = frame.copy()
+                #     for bIdx, bbox in enumerate(bboxes):
+                #         x1, y1, x2, y2 = bbox.astype(int)
+                #         cv2.rectangle(bbox_vis, [x1, y1], [x2, y2], color=[255,0,0], thickness=2)
+                #     cv2.imwrite('frame11.png', bbox_vis)
+                #     breakpoint()
+                try:
+                    inputs = feature_extractor([patch for _, patch in patches if patch.shape[0] > 1], return_tensors="pt")
+                except Exception as e:
+                    print(e)
+                    print(traceback.format_exc())
+                    print(sys.exc_info()[2])
+                    for _, patch in patches:
+                        print(patch.shape)
+                    return            
+                inputs['pixel_values'] = inputs['pixel_values'].cuda()
+                # print(x1, y1, x2, y2)
+                with torch.no_grad():
+                    logits = classifier(**inputs).logits
+                    
+                tmp = (logits.argmax(-1) == 1).nonzero().squeeze().tolist()
+                player_inds = [patches[i][0] for i in tmp] if isinstance(tmp, list) else [patches[tmp][0]]
+                # print(frame_id, player_inds)
+                # predicted_labels = logits.argmax(-1).cpu().numpy()
+                # player_inds = [bIdx for (bIdx, _), label in zip(patches, labels) if label == 1]
+                # print('#players', player_inds, len(player_inds))
+                detections = detections[player_inds]
+
+                # gt_ids: identify using classifier
+                # video_id = args.path.split('/')[-1][:-len('.mp4')]
+                # game_id = args.path.split('/')[-3]
+                gt_ids = np.array([classify_player(p) for p in [patches[i][1] for i in tmp]])
+
+        # do the tracking
+        if detections is not None:
+            # Run tracker
+            online_targets = tracker.update(detections, gt_ids, img_info["raw_img"])
+
+            online_tlwhs = []
+            online_ids = []
+            online_scores = []
+            for t in online_targets:
+                tlwh = t.tlwh
+                tid = t.track_id
+                # if tid > 9: continue
+                vertical = tlwh[2] / tlwh[3] > args.aspect_ratio_thresh
+                if tlwh[2] * tlwh[3] > args.min_box_area and not vertical:
+                    online_tlwhs.append(tlwh)
+                    online_ids.append(tid)
+                    online_scores.append(t.score)
+                    results.append(
+                        f"{frame_id},{tid},{tlwh[0]:.2f},{tlwh[1]:.2f},{tlwh[2]:.2f},{tlwh[3]:.2f},{t.score:.2f},-1,-1,-1\n"
+                    )
+            timer.toc()
+            online_im = plot_tracking(
+                img_info['raw_img'], online_tlwhs, online_ids, frame_id=frame_id + 1, fps=1. / timer.average_time
+            )
+        else:
+            timer.toc()
+            online_im = img_info['raw_img']
+
+        ims_to_write.append(online_im)
+            # ch = cv2.waitKey(1)
+            # if ch == 27 or ch == ord("q") or ch == ord("Q"):
+            #     break
+        # else:
+        #     break
+        # frame_id += 1
 
     if args.save_result:
+        for online_im in ims_to_write:
+            vid_writer.write(online_im)
+            
         res_file = osp.join(save_folder, f"{osp.basename(args.path)[:-len('.mp4')]}_tracking.txt")
         with open(res_file, 'w') as f:
             f.writelines(results)
